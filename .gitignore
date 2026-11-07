@@ -1,0 +1,44 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.coverage
+htmlcov/
+.ruff_cache/
+
+# Environment / secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Local market data and state
+*.duckdb
+*.duckdb.wal
+*.db
+/data/
+
+# Terraform local state / secrets / plan files
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+!*.tfvars.example
+*.tfplan
+*.plan
+*-plan.txt
+tfplan-review.txt
+tfplan.json
+terraform-state*.json
+backend.remote.hcl
+backend.local.hcl
+crash.log
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

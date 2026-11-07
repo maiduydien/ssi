@@ -1,0 +1,7 @@
+resource_group_name      = "rg-vn30f1m-appservice"
+location                = "southeastasia"
+app_name                = "app-vn30f1m"
+acr_login_server         = "acrvn30f1mshared.azurecr.io"
+acr_resource_group_name  = "rg-vn30f1m-shared"
+image_repository         = "ssi-v57-platform"
+image_tag               = "IMMUTABLE_TAG"

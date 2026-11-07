@@ -1,0 +1,7 @@
+# Use the immutable image tag already pushed to the shared ACR.
+container_image         = "acrvn30f1mshared.azurecr.io/ssi-v57-platform:IMMUTABLE_TAG"
+location               = "southeastasia"
+project_name            = "vn30f1m"
+environment             = "staging"
+acr_name                = "acrvn30f1mshared"
+acr_resource_group_name = "rg-vn30f1m-shared"

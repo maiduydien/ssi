@@ -1,0 +1,59 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ssi-v57-platform
+  labels:
+    app: ssi-v57-platform
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: ssi-v57-platform
+  template:
+    metadata:
+      labels:
+        app: ssi-v57-platform
+    spec:
+      containers:
+        - name: web
+          image: REPLACE_WITH_ACR/ssi-v57-platform:IMMUTABLE_TAG
+          ports:
+            - containerPort: 8050
+          env:
+            - name: DASH_HOST
+              value: "0.0.0.0"
+            - name: DASH_PORT
+              value: "8050"
+            - name: DATA_MODE
+              value: "auto"
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 8050
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8050
+            initialDelaySeconds: 20
+            periodSeconds: 20
+          resources:
+            requests:
+              cpu: 250m
+              memory: 512Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ssi-v57-platform
+spec:
+  selector:
+    app: ssi-v57-platform
+  ports:
+    - port: 80
+      targetPort: 8050
+  type: ClusterIP

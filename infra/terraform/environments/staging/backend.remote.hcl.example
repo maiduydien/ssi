@@ -1,0 +1,6 @@
+# Remote state config for staging; use a distinct state key per environment.
+resource_group_name  = "rg-terraform-state"
+storage_account_name = "REPLACE_WITH_UNIQUE_STORAGE_ACCOUNT"
+container_name       = "tfstate"
+key                  = "vn30f1m/staging.tfstate"
+use_azuread_auth     = true

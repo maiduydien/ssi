@@ -1,0 +1,92 @@
+# Release pipeline template. Run manually with the exact immutable ACR image tag
+# that passed CI. Configure approvals/checks on Azure DevOps Environments.
+trigger: none
+
+parameters:
+  - name: imageTag
+    type: string
+    default: ''
+
+variables:
+  devServiceConnection: 'sc-azure-dev' # Separate least-privilege service connections.
+  stagingServiceConnection: 'sc-azure-staging'
+  prodServiceConnection: 'sc-azure-prod'
+  acrLoginServer: 'replace-with-acr.azurecr.io'
+  imageRepository: 'ssi-v57-platform'
+  devResourceGroup: 'rg-vn30f1m-dev'
+  stagingResourceGroup: 'rg-vn30f1m-staging'
+  prodResourceGroup: 'rg-vn30f1m-prod'
+  devContainerApp: 'ca-vn30f1m-dev'
+  stagingContainerApp: 'ca-vn30f1m-staging'
+  prodContainerApp: 'ca-vn30f1m-prod'
+
+stages:
+  - stage: Development
+    displayName: Deploy Development
+    jobs:
+      - deployment: DeployDev
+        environment: vn30f1m-dev
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - task: AzureCLI@2
+                  inputs:
+                    azureSubscription: $(devServiceConnection)
+                    scriptType: bash
+                    scriptLocation: inlineScript
+                    inlineScript: |
+                      test -n '${{ parameters.imageTag }}' || { echo 'imageTag is required'; exit 1; }
+                      az containerapp update --name $(devContainerApp) \
+                        --resource-group $(devResourceGroup) \
+                        --image $(acrLoginServer)/$(imageRepository):${{ parameters.imageTag }}
+                      FQDN=`az containerapp show --name $(devContainerApp) --resource-group $(devResourceGroup) --query properties.configuration.ingress.fqdn -o tsv`
+                      curl --fail --retry 12 --retry-delay 5 "https://${FQDN}/health"
+                      curl --fail "https://${FQDN}/ready"
+
+  - stage: Staging
+    displayName: Deploy Staging
+    dependsOn: Development
+    jobs:
+      - deployment: DeployStaging
+        environment: vn30f1m-staging # Configure QA/approval checks in Azure DevOps.
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - task: AzureCLI@2
+                  inputs:
+                    azureSubscription: $(stagingServiceConnection)
+                    scriptType: bash
+                    scriptLocation: inlineScript
+                    inlineScript: |
+                      az containerapp update --name $(stagingContainerApp) \
+                        --resource-group $(stagingResourceGroup) \
+                        --image $(acrLoginServer)/$(imageRepository):${{ parameters.imageTag }}
+                      FQDN=`az containerapp show --name $(stagingContainerApp) --resource-group $(stagingResourceGroup) --query properties.configuration.ingress.fqdn -o tsv`
+                      curl --fail --retry 12 --retry-delay 5 "https://${FQDN}/health"
+                      curl --fail "https://${FQDN}/ready"
+
+  - stage: Production
+    displayName: Deploy Production
+    dependsOn: Staging
+    jobs:
+      - deployment: DeployProduction
+        environment: vn30f1m-production # Configure mandatory approval + change gate.
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - task: AzureCLI@2
+                  inputs:
+                    azureSubscription: $(prodServiceConnection)
+                    scriptType: bash
+                    scriptLocation: inlineScript
+                    inlineScript: |
+                      az containerapp update --name $(prodContainerApp) \
+                        --resource-group $(prodResourceGroup) \
+                        --image $(acrLoginServer)/$(imageRepository):${{ parameters.imageTag }}
+                      FQDN=`az containerapp show --name $(prodContainerApp) --resource-group $(prodResourceGroup) --query properties.configuration.ingress.fqdn -o tsv`
+                      curl --fail --retry 12 --retry-delay 5 "https://${FQDN}/health"
+                      curl --fail "https://${FQDN}/ready"
+                      echo 'Review Application Insights, error rate, latency and deployment logs before closing the release.'

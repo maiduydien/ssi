@@ -1,0 +1,89 @@
+# Azure DevOps CI. Configure the ACR service connection before enabling main push.
+trigger:
+  branches:
+    include: [develop, main]
+
+pr:
+  branches:
+    include: [develop, main]
+
+pool:
+  vmImage: ubuntu-latest
+
+variables:
+  pythonVersion: '3.11'
+  imageRepository: 'ssi-v57-platform'
+  acrServiceConnection: 'sc-acr-nonprod' # Replace with your Azure DevOps Docker service connection.
+  acrLoginServer: 'replace-with-acr.azurecr.io'
+
+stages:
+  - stage: Validate
+    displayName: Validate, test and scan source
+    jobs:
+      - job: PythonChecks
+        steps:
+          - checkout: self
+          - template: pipelines/templates/python-quality.yml
+            parameters:
+              pythonVersion: $(pythonVersion)
+
+  - stage: InfrastructureValidate
+    displayName: Validate Terraform and scan IaC
+    dependsOn: Validate
+    condition: succeeded()
+    jobs:
+      - job: TerraformChecks
+        steps:
+          - checkout: self
+          - script: |
+              set -euo pipefail
+              TF_VERSION=1.9.8
+              curl -fsSLo terraform.zip "https://releases.hashicorp.com/terraform/${TF_VERSION}/terraform_${TF_VERSION}_linux_amd64.zip"
+              unzip -o terraform.zip
+              sudo install terraform /usr/local/bin/terraform
+              terraform version
+              for envdir in infra/terraform/environments/shared infra/terraform/environments/dev infra/terraform/environments/staging infra/terraform/environments/prod infra/terraform/targets/app_service infra/terraform/targets/aks; do
+                terraform -chdir="$envdir" init -backend=false -input=false
+                terraform -chdir="$envdir" validate
+              done
+            displayName: Terraform init and validate (no apply)
+          - script: |
+              python -m pip install --upgrade checkov
+              checkov -d infra/terraform --framework terraform --soft-fail
+            displayName: IaC security scan (report-only baseline)
+
+  - stage: ContainerBuildScanPublish
+    displayName: Build once, scan, and publish immutable ACR tags
+    dependsOn:
+      - Validate
+      - InfrastructureValidate
+    condition: succeeded()
+    jobs:
+      - job: ContainerBuild
+        steps:
+          - checkout: self
+          - script: |
+              docker build --pull \
+                --build-arg APP_VERSION=$(Build.BuildId) \
+                --build-arg GIT_SHA=$(Build.SourceVersion) \
+                -t ssi-v57-platform:$(Build.BuildId) .
+            displayName: Build versioned Docker image
+          - script: |
+              curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh \
+                | sh -s -- -b /usr/local/bin v0.58.2
+              trivy image --severity HIGH,CRITICAL --exit-code 1 ssi-v57-platform:$(Build.BuildId)
+            displayName: Scan built image with Trivy
+          - task: Docker@2
+            condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+            displayName: Authenticate to ACR (main branch only)
+            inputs:
+              command: login
+              containerRegistry: $(acrServiceConnection)
+          - script: |
+              set -euo pipefail
+              docker tag ssi-v57-platform:$(Build.BuildId) $(acrLoginServer)/$(imageRepository):$(Build.BuildId)
+              docker tag ssi-v57-platform:$(Build.BuildId) $(acrLoginServer)/$(imageRepository):$(Build.SourceVersion)
+              docker push $(acrLoginServer)/$(imageRepository):$(Build.BuildId)
+              docker push $(acrLoginServer)/$(imageRepository):$(Build.SourceVersion)
+            condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+            displayName: Push the scanned image to ACR (immutable tags)

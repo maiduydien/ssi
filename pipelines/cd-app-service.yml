@@ -1,0 +1,61 @@
+# Optional Azure App Service slot release. Run with a previously tested image tag.
+trigger: none
+
+parameters:
+  - name: imageTag
+    type: string
+    default: ''
+
+variables:
+  stagingServiceConnection: 'sc-azure-appservice-staging'
+  prodServiceConnection: 'sc-azure-appservice-prod'
+  resourceGroup: 'rg-vn30f1m-appservice'
+  appName: 'app-vn30f1m'
+  acrLoginServer: 'replace-with-acr.azurecr.io'
+  imageRepository: 'ssi-v57-platform'
+
+stages:
+  - stage: DeployStagingSlot
+    jobs:
+      - deployment: DeploySlot
+        environment: vn30f1m-appservice-staging
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - task: AzureCLI@2
+                  inputs:
+                    azureSubscription: $(stagingServiceConnection)
+                    scriptType: bash
+                    scriptLocation: inlineScript
+                    inlineScript: |
+                      test -n '${{ parameters.imageTag }}' || { echo 'imageTag is required'; exit 1; }
+                      az webapp config container set \
+                        --name $(appName) --resource-group $(resourceGroup) --slot staging \
+                        --container-image-name $(acrLoginServer)/$(imageRepository):${{ parameters.imageTag }} \
+                        --container-registry-url https://$(acrLoginServer)
+                      SLOT_FQDN=`az webapp show --name $(appName) --resource-group $(resourceGroup) --slot staging --query defaultHostName -o tsv`
+                      curl --fail --retry 12 --retry-delay 5 "https://${SLOT_FQDN}/health"
+                      curl --fail "https://${SLOT_FQDN}/ready"
+
+  - stage: SwapToProduction
+    dependsOn: DeployStagingSlot
+    jobs:
+      - deployment: SwapSlot
+        environment: vn30f1m-appservice-production # Configure required approval in Azure DevOps.
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - task: AzureCLI@2
+                  inputs:
+                    azureSubscription: $(prodServiceConnection)
+                    scriptType: bash
+                    scriptLocation: inlineScript
+                    inlineScript: |
+                      az webapp deployment slot swap \
+                        --name $(appName) --resource-group $(resourceGroup) \
+                        --slot staging --target-slot production
+                      PROD_FQDN=`az webapp show --name $(appName) --resource-group $(resourceGroup) --query defaultHostName -o tsv`
+                      curl --fail --retry 12 --retry-delay 5 "https://${PROD_FQDN}/health"
+                      curl --fail "https://${PROD_FQDN}/ready"
