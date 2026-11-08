@@ -337,6 +337,22 @@ jobs:
 
       - name: Apply the exact reviewed plan
         run: terraform -chdir="$TF_DIR" apply -input=false -lock-timeout=5m tfplan
+      
+      - name: Verify deployed Container App revision
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          FQDN="$(terraform -chdir="$TF_DIR" output -raw container_app_url)"
+
+          echo "Terraform output FQDN: $FQDN"
+
+          az containerapp revision list \
+            --name ca-vn30f1m-dev \
+            --resource-group rg-vn30f1m-dev \
+            --query "[].{name:name,active:properties.active,created:properties.createdTime}" \
+            --output table
+
 
       - name: Smoke test ACA endpoints
         shell: bash
