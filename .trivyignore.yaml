@@ -1,0 +1,18 @@
+vulnerabilities:
+  - id: CVE-2025-47273
+    purls:
+      - "pkg:pypi/setuptools@70.3.0"
+    expired_at: 2026-12-08
+    statement: "Temporarily ignored: suspected stale SBOM entry. Revisit after SBOM investigation."
+
+  - id: CVE-2026-59890
+    purls:
+      - "pkg:pypi/setuptools@70.3.0"
+    expired_at: 2026-12-08
+    statement: "Temporarily ignored: suspected stale SBOM entry. Revisit after SBOM investigation."
+
+  - id: GHSA-xmj3-9gf7-h52w
+    purls:
+      - "pkg:pypi/setuptools@70.3.0"
+    expired_at: 2026-12-08
+    statement: "Temporarily ignored: suspected stale SBOM entry. Revisit after SBOM investigation."

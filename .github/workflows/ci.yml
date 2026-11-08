@@ -76,6 +76,7 @@ jobs:
           ignore-unfixed: true
           vuln-type: os,library
           severity: CRITICAL,HIGH
+          trivyignores: .trivyignore.yaml
 
   acr-publish:
     name: Azure OIDC + Publish immutable image to ACR
