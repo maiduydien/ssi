@@ -363,17 +363,44 @@ jobs:
             --query "[].{Revision:name,Active:properties.active,Created:properties.createdTime}" \
             --output table
 
-      - name: Smoke test ACA endpoints
+            - name: Smoke test ACA endpoints
         shell: bash
         run: |
           set -euo pipefail
-          FQDN="$(terraform -chdir="$TF_DIR" output -raw container_app_url)"
-          if [[ "$FQDN" == http* ]]; then APP_URL="$FQDN"; else APP_URL="https://$FQDN"; fi
-          echo "Checking $APP_URL"
+
+          REVISION="$(az containerapp revision list \
+            --name ca-vn30f1m-dev \
+            --resource-group rg-vn30f1m-dev \
+            --query "sort_by([?properties.active==\`true\`], &properties.createdTime)[-1].name" \
+            --output tsv)"
+
+          FQDN="$(az containerapp revision show \
+            --name ca-vn30f1m-dev \
+            --resource-group rg-vn30f1m-dev \
+            --revision "$REVISION" \
+            --query properties.fqdn \
+            --output tsv)"
+
+          APP_URL="https://$FQDN"
+
+          echo "Testing revision: $REVISION"
+          echo "Testing URL: $APP_URL"
+
           for endpoint in health ready version; do
             echo "Checking /$endpoint"
-            curl --fail --silent --show-error --retry 15 --retry-delay 10 --retry-connrefused "$APP_URL/$endpoint"
+            curl --fail --silent --show-error \
+              --retry 15 --retry-delay 10 --retry-connrefused \
+              "$APP_URL/$endpoint"
             echo
           done
-          curl --fail --silent --show-error "$APP_URL/version" | python -c \
-            'import json,sys,os; v=json.load(sys.stdin); expected=os.environ["GITHUB_SHA"]; actual=v.get("commit"); assert actual==expected, f"Expected commit {expected}, got {actual}"'
+
+          curl --fail --silent --show-error "$APP_URL/version" |
+            python -c '
+          import json, sys, os
+          v = json.load(sys.stdin)
+          expected = os.environ["GITHUB_SHA"]
+          actual = v.get("commit")
+          print("Expected:", expected)
+          print("Actual:  ", actual)
+          assert actual == expected, f"Expected commit {expected}, got {actual}"
+          '
