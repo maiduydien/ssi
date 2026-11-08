@@ -2,7 +2,7 @@ import pytest
 
 pytest.importorskip("duckdb")
 
-from app.data.duckdb_repository import DuckDBRepository, DataAccessError  # noqa: E402
+from app.data.duckdb_repository import DataAccessError, DuckDBRepository  # noqa: E402
 from app.data.tick_repository import TickRepository  # noqa: E402
 from tests.fixtures.create_test_db import create_test_database  # noqa: E402
 

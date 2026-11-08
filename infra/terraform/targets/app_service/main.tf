@@ -9,7 +9,9 @@ terraform {
     }
   }
 }
-provider "azurerm" { features {} }
+provider "azurerm" {
+  features {}
+}
 
 variable "resource_group_name" { type = string }
 variable "location" { type = string }
@@ -37,8 +39,8 @@ resource "azurerm_linux_web_app" "this" {
   identity { type = "SystemAssigned" }
 
   site_config {
-    always_on = true
-    health_check_path = "/health"
+    always_on                               = true
+    health_check_path                       = "/health"
     container_registry_use_managed_identity = true
     application_stack {
       docker_image_name   = "${var.image_repository}:${var.image_tag}"
@@ -76,8 +78,8 @@ resource "azurerm_linux_web_app_slot" "staging" {
   identity { type = "SystemAssigned" }
 
   site_config {
-    always_on = true
-    health_check_path = "/health"
+    always_on                               = true
+    health_check_path                       = "/health"
     container_registry_use_managed_identity = true
     application_stack {
       docker_image_name   = "${var.image_repository}:${var.image_tag}"

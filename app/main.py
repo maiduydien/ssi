@@ -1,11 +1,12 @@
 """Application entry point and health/readiness/version endpoints."""
 import logging
+
 from flask import jsonify
 
-from app.config import HOST, PORT, DEBUG, APP_VERSION, GIT_SHA
-from app.ui.dashboard import app as dash_app
-from app.services.market_data_service import market_data_service
+from app.config import APP_VERSION, DEBUG, GIT_SHA, HOST, PORT
 from app.observability.logging_config import configure_logging
+from app.services.market_data_service import market_data_service
+from app.ui.dashboard import app as dash_app
 
 logger = logging.getLogger(__name__)
 

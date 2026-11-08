@@ -1,6 +1,7 @@
 """RAM tick cache merge logic migrated from V57 unchanged."""
 import pandas as pd
 
+
 def merge_tick_frames(existing, incoming, max_rows=None):
     """Append timestamp-ordered incoming ticks efficiently.
 

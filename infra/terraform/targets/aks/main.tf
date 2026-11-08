@@ -1,7 +1,9 @@
 # Optional AKS target. AKS has materially higher cost/operational overhead than ACA.
 # Deploy this only when Kubernetes is a deliberate learning or architecture objective.
+
 terraform {
   required_version = ">= 1.7.0, < 2.0.0"
+
   required_providers {
     azurerm = {
       source  = "hashicorp/azurerm"
@@ -9,12 +11,26 @@ terraform {
     }
   }
 }
-provider "azurerm" { features {} }
 
-variable "resource_group_name" { type = string }
-variable "location" { type = string }
-variable "cluster_name" { type = string }
-variable "acr_id" { type = string }
+provider "azurerm" {
+  features {}
+}
+
+variable "resource_group_name" {
+  type = string
+}
+
+variable "location" {
+  type = string
+}
+
+variable "cluster_name" {
+  type = string
+}
+
+variable "acr_id" {
+  type = string
+}
 
 resource "azurerm_kubernetes_cluster" "this" {
   name                = var.cluster_name
@@ -30,13 +46,15 @@ resource "azurerm_kubernetes_cluster" "this" {
     type       = "VirtualMachineScaleSets"
   }
 
-  identity { type = "SystemAssigned" }
+  identity {
+    type = "SystemAssigned"
+  }
 
   network_profile {
-    network_plugin      = "azure"
-    network_policy      = "azure"
-    load_balancer_sku   = "standard"
-    outbound_type       = "loadBalancer"
+    network_plugin    = "azure"
+    network_policy    = "azure"
+    load_balancer_sku = "standard"
+    outbound_type     = "loadBalancer"
   }
 }
 
@@ -46,5 +64,10 @@ resource "azurerm_role_assignment" "acr_pull" {
   principal_id         = azurerm_kubernetes_cluster.this.kubelet_identity[0].object_id
 }
 
-output "cluster_name" { value = azurerm_kubernetes_cluster.this.name }
-output "resource_group_name" { value = azurerm_kubernetes_cluster.this.resource_group_name }
+output "cluster_name" {
+  value = azurerm_kubernetes_cluster.this.name
+}
+
+output "resource_group_name" {
+  value = azurerm_kubernetes_cluster.this.resource_group_name
+}

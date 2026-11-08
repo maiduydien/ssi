@@ -1,9 +1,10 @@
 """Application-facing market data service and explicit demo fallback policy."""
 import logging
+
 import pandas as pd
 
-from app.config import DB_PATH, TABLE_NAME, TICK_LOAD_LIMIT, DATA_MODE
-from app.data.duckdb_repository import DuckDBRepository, DataAccessError
+from app.config import DATA_MODE, DB_PATH, TABLE_NAME, TICK_LOAD_LIMIT
+from app.data.duckdb_repository import DataAccessError, DuckDBRepository
 from app.data.tick_repository import TickRepository
 from app.fixtures.mock_data import make_mock_ticks
 
