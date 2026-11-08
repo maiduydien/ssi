@@ -4,7 +4,13 @@ resource "azurerm_container_app_environment" "this" {
   resource_group_name        = var.resource_group_name
   logs_destination           = "log-analytics"
   log_analytics_workspace_id = var.log_analytics_workspace_id
-  tags                             = var.tags
+  tags                       = var.tags
+
+  lifecycle {
+    ignore_changes = [
+      workload_profile,
+    ]
+  }
 }
 
 resource "azurerm_container_app" "this" {
@@ -14,6 +20,11 @@ resource "azurerm_container_app" "this" {
   revision_mode                = "Single"
   tags                         = var.tags
 
+  lifecycle {
+    ignore_changes = [
+      workload_profile_name,
+    ]
+  }
   identity {
     type         = "UserAssigned"
     identity_ids = [var.identity_id]
@@ -23,6 +34,7 @@ resource "azurerm_container_app" "this" {
     server   = var.acr_login_server
     identity = var.identity_id
   }
+
 
   template {
     min_replicas = var.min_replicas

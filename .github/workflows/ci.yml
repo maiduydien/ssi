@@ -5,11 +5,18 @@ on:
     branches: [develop, main]
   push:
     branches: [develop, main]
+  workflow_dispatch:
+    inputs:
+      deploy_dev:
+        description: 'Run Terraform Plan and request Dev Apply (develop only)'
+        required: true
+        type: boolean
+        default: false
 
 permissions:
   contents: read
 
-# Serialize runs on the same branch so two Terraform deployments do not race.
+# Serialize workflow runs on the same branch to avoid concurrent Terraform operations.
 concurrency:
   group: ci-cd-${{ github.ref }}
   cancel-in-progress: false
@@ -69,26 +76,32 @@ jobs:
           vuln-type: os,library
           severity: CRITICAL,HIGH
 
-      # Only the protected develop branch publishes to the existing Azure ACR.
-      # PRs and main-branch pushes run CI but do not publish/deploy.
-      - name: Azure Login (OIDC)
-        if: github.event_name == 'push' && github.ref == 'refs/heads/develop'
-        uses: azure/login@v2
+      # Publish only from develop push, or a deliberate manual Dev deployment run.
+      # PRs and main-branch pushes never publish to ACR.
+      - name: Azure Login (OIDC - develop branch)
+        if: >-
+          github.ref == 'refs/heads/develop' &&
+          (github.event_name == 'push' ||
+           (github.event_name == 'workflow_dispatch' && inputs.deploy_dev == true))
+        uses: azure/login@v3
         with:
           client-id: ${{ vars.AZURE_CLIENT_ID }}
           tenant-id: ${{ vars.AZURE_TENANT_ID }}
           subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
 
       - name: Push immutable image to ACR
-        if: github.event_name == 'push' && github.ref == 'refs/heads/develop'
+        if: >-
+          github.ref == 'refs/heads/develop' &&
+          (github.event_name == 'push' ||
+           (github.event_name == 'workflow_dispatch' && inputs.deploy_dev == true))
         env:
           ACR_NAME: ${{ vars.ACR_NAME }}
           ACR_LOGIN_SERVER: ${{ vars.ACR_LOGIN_SERVER }}
           LOCAL_IMAGE: ssi-v57-platform:${{ github.sha }}
         run: |
           set -euo pipefail
-          test -n "$ACR_NAME"
-          test -n "$ACR_LOGIN_SERVER"
+          : "${ACR_NAME:?Missing GitHub variable ACR_NAME}"
+          : "${ACR_LOGIN_SERVER:?Missing GitHub variable ACR_LOGIN_SERVER}"
           az acr login --name "$ACR_NAME"
           IMAGE="$ACR_LOGIN_SERVER/$ACR_REPOSITORY:$GITHUB_SHA"
           docker tag "$LOCAL_IMAGE" "$IMAGE"
@@ -129,7 +142,10 @@ jobs:
 
   terraform-plan:
     name: Terraform Plan (Dev)
-    if: github.event_name == 'push' && github.ref == 'refs/heads/develop'
+    if: >-
+      github.ref == 'refs/heads/develop' &&
+      (github.event_name == 'push' ||
+       (github.event_name == 'workflow_dispatch' && inputs.deploy_dev == true))
     needs: [quality-and-image, terraform-validate]
     runs-on: ubuntu-latest
     permissions:
@@ -152,8 +168,8 @@ jobs:
         with:
           ref: ${{ github.sha }}
 
-      - name: Azure Login (OIDC)
-        uses: azure/login@v2
+      - name: Azure Login (OIDC - develop branch)
+        uses: azure/login@v3
         with:
           client-id: ${{ vars.AZURE_CLIENT_ID }}
           tenant-id: ${{ vars.AZURE_TENANT_ID }}
@@ -163,6 +179,7 @@ jobs:
         uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: ${{ env.TF_VERSION }}
+          terraform_wrapper: false
 
       - name: Initialize existing remote State (OIDC)
         shell: bash
@@ -208,8 +225,9 @@ jobs:
           terraform -chdir="$TF_DIR" show -no-color tfplan > "$TF_DIR/tfplan-review.txt"
           terraform -chdir="$TF_DIR" show -json tfplan > "$TF_DIR/tfplan.json"
           python - "$TF_DIR/tfplan.json" <<'PY'
-          import json, sys
-          plan = json.load(open(sys.argv[1], encoding="utf-8"))
+          import json, os, sys
+          with open(sys.argv[1], encoding="utf-8") as source:
+              plan = json.load(source)
           changes = plan.get("resource_changes") or []
           destructive = [
               item for item in changes
@@ -223,17 +241,20 @@ jobs:
           counts = {"create": 0, "update": 0, "delete": 0, "no-op": 0}
           for item in changes:
               actions = item.get("change", {}).get("actions") or []
-              if actions == ["create"]: counts["create"] += 1
-              elif actions == ["update"]: counts["update"] += 1
-              elif actions == ["delete"]: counts["delete"] += 1
-              elif actions == ["no-op"]: counts["no-op"] += 1
-          summary = "Terraform Dev Plan: " + ", ".join(f"{k}={v}" for k, v in counts.items())
+              if actions == ["create"]:
+                  counts["create"] += 1
+              elif actions == ["update"]:
+                  counts["update"] += 1
+              elif actions == ["delete"]:
+                  counts["delete"] += 1
+              elif actions == ["no-op"]:
+                  counts["no-op"] += 1
+          summary = "Terraform Dev Plan: " + ", ".join(f"{key}={value}" for key, value in counts.items())
           print(summary)
-          import os
-          with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as f:
-              f.write("## Terraform Plan (Dev)\\n\\n")
-              f.write(summary + "\\n\\n")
-              f.write("The full review file is attached as the `terraform-plan-dev` artifact.\\n")
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as summary_file:
+              summary_file.write("## Terraform Plan (Dev)\\n\\n")
+              summary_file.write(summary + "\\n\\n")
+              summary_file.write("Review the attached `terraform-plan-dev` artifact before approving deployment.\\n")
           PY
           rm -f "$TF_DIR/tfplan.json"
 
@@ -248,8 +269,11 @@ jobs:
           if-no-files-found: error
 
   terraform-apply:
-    name: Approval + Terraform Apply (Dev)
-    if: github.event_name == 'push' && github.ref == 'refs/heads/develop'
+    name: Manual approval + Terraform Apply (Dev)
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      github.ref == 'refs/heads/develop' &&
+      inputs.deploy_dev == true
     needs: terraform-plan
     runs-on: ubuntu-latest
     environment:
@@ -261,9 +285,9 @@ jobs:
     env:
       ARM_USE_OIDC: 'true'
       ARM_USE_AZUREAD: 'true'
-      ARM_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
-      ARM_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
-      ARM_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+      ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+      ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
       TFSTATE_RESOURCE_GROUP: ${{ vars.TFSTATE_RESOURCE_GROUP }}
       TFSTATE_STORAGE_ACCOUNT_NAME: ${{ vars.TFSTATE_STORAGE_ACCOUNT_NAME }}
       TFSTATE_CONTAINER_NAME: ${{ vars.TFSTATE_CONTAINER_NAME }}
@@ -274,28 +298,33 @@ jobs:
         with:
           ref: ${{ github.sha }}
 
-      - name: Download the approved Terraform plan
+      - name: Download the plan from this workflow run
         uses: actions/download-artifact@v4
         with:
           name: terraform-plan-dev
           path: infra/terraform/environments/dev
 
-      - name: Azure Login (OIDC)
-        uses: azure/login@v2
+      - name: Azure Login (OIDC - dev environment)
+        uses: azure/login@v3
         with:
-          client-id: ${{ vars.AZURE_CLIENT_ID }}
-          tenant-id: ${{ vars.AZURE_TENANT_ID }}
-          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: ${{ env.TF_VERSION }}
+          terraform_wrapper: false
 
-      - name: Initialize same remote State
+      - name: Initialize the same existing remote State
         shell: bash
         run: |
           set -euo pipefail
+          : "${TFSTATE_RESOURCE_GROUP:?Missing GitHub variable TFSTATE_RESOURCE_GROUP}"
+          : "${TFSTATE_STORAGE_ACCOUNT_NAME:?Missing GitHub variable TFSTATE_STORAGE_ACCOUNT_NAME}"
+          : "${TFSTATE_CONTAINER_NAME:?Missing GitHub variable TFSTATE_CONTAINER_NAME}"
+          : "${TFSTATE_KEY_DEV:?Missing GitHub variable TFSTATE_KEY_DEV}"
           terraform -chdir="$TF_DIR" init -input=false \
             -backend-config="resource_group_name=$TFSTATE_RESOURCE_GROUP" \
             -backend-config="storage_account_name=$TFSTATE_STORAGE_ACCOUNT_NAME" \
