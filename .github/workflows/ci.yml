@@ -70,7 +70,7 @@ jobs:
         run: |
           docker run --rm \
             --entrypoint python \
-            "$LOCAL_IMAGE" \
+            "ssi-v57-platform:${GITHUB_SHA}" \
             -c "import os; print('GIT_SHA =', os.getenv('GIT_SHA'))"
 
       - name: Scan Docker image
