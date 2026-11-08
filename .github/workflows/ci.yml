@@ -363,7 +363,7 @@ jobs:
             --query "[].{Revision:name,Active:properties.active,Created:properties.createdTime}" \
             --output table
 
-            - name: Smoke test ACA endpoints
+      - name: Smoke test ACA endpoints
         shell: bash
         run: |
           set -euo pipefail
