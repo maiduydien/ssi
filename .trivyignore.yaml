@@ -1,23 +1,7 @@
+
 vulnerabilities:
-  - id: CVE-2025-47273
-    purls:
-      - "pkg:pypi/setuptools@70.3.0"
-    expired_at: 2026-12-08
-    statement: "Temporarily ignored: suspected stale SBOM entry. Revisit after SBOM investigation."
-
-  - id: CVE-2026-59890
-    purls:
-      - "pkg:pypi/setuptools@70.3.0"
-    expired_at: 2026-12-08
-    statement: "Temporarily ignored: suspected stale SBOM entry. Revisit after SBOM investigation."
-
-  - id: GHSA-xmj3-9gf7-h52w
-    purls:
-      - "pkg:pypi/setuptools@70.3.0"
-    expired_at: 2026-12-08
-    statement: "Temporarily ignored: suspected stale SBOM entry. Revisit after SBOM investigation."
-      # Temporary suppression: setuptools CVE-2025-47273.
-  # Revisit after fixing the setuptools version in Docker image.
+  # Temporary suppression: setuptools vulnerabilities.
+  # Revisit after deployment and investigate/upgrading setuptools.
   - id: CVE-2025-47273
     purls:
       - "pkg:pypi/setuptools@70.3.0"
@@ -25,3 +9,19 @@ vulnerabilities:
     statement: >-
       Temporarily accepted to unblock CI/CD.
       Revisit and upgrade setuptools after deployment.
+
+  - id: CVE-2026-59890
+    purls:
+      - "pkg:pypi/setuptools@70.3.0"
+    expired_at: 2026-12-08
+    statement: >-
+      Temporarily ignored: suspected stale SBOM entry.
+      Revisit after SBOM investigation.
+
+  - id: GHSA-xmj3-9gf7-h52w
+    purls:
+      - "pkg:pypi/setuptools@70.3.0"
+    expired_at: 2026-12-08
+    statement: >-
+      Temporarily ignored: suspected stale SBOM entry.
+      Revisit after SBOM investigation.
