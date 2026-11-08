@@ -1,12 +1,8 @@
-name: Azure OIDC Authentication Test
+
+name: Azure OIDC Branch Authentication Test
 
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - develop
-    paths:
-      - ".github/workflows/azure-oidc-test.yml"
 
 permissions:
   contents: read
@@ -14,22 +10,22 @@ permissions:
 
 jobs:
   azure-login:
-    name: Test Azure OIDC Login
+    name: Test Azure OIDC Login - develop
     runs-on: ubuntu-latest
 
-    # Must match the Azure Federated Credential subject
-    environment: dev
+    # Chỉ cho phép chạy từ nhánh develop
+    if: github.ref == 'refs/heads/develop'
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Login to Azure using OIDC
+      - name: Login to Azure using branch OIDC
         uses: azure/login@v3
         with:
-          client-id: ${{ secrets.AZURE_CLIENT_ID }}
-          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
-          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
 
       - name: Verify Azure account
         shell: bash
@@ -38,7 +34,7 @@ jobs:
             --query "{name:name, subscriptionId:id, tenantId:tenantId}" \
             --output table
 
-      - name: Verify Azure identity
+      - name: Verify Azure access token
         shell: bash
         run: |
           az account get-access-token \
