@@ -158,3 +158,189 @@ jobs:
       ARM_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
       ARM_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
       TFSTATE_RESOURCE_GROUP: ${{ vars.TFSTATE_RESOURCE_GROUP }}
+      TFSTATE_STORAGE_ACCOUNT_NAME: ${{ vars.TFSTATE_STORAGE_ACCOUNT_NAME }}
+      TFSTATE_CONTAINER_NAME: ${{ vars.TFSTATE_CONTAINER_NAME }}
+      TFSTATE_KEY_DEV: ${{ vars.TFSTATE_KEY_DEV }}
+      ACR_LOGIN_SERVER: ${{ vars.ACR_LOGIN_SERVER }}
+    steps:
+      - name: Checkout exact commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Azure Login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Initialize existing remote State (OIDC)
+        shell: bash
+        run: |
+          set -euo pipefail
+          : "${TFSTATE_RESOURCE_GROUP:?Missing GitHub variable TFSTATE_RESOURCE_GROUP}"
+          : "${TFSTATE_STORAGE_ACCOUNT_NAME:?Missing GitHub variable TFSTATE_STORAGE_ACCOUNT_NAME}"
+          : "${TFSTATE_CONTAINER_NAME:?Missing GitHub variable TFSTATE_CONTAINER_NAME}"
+          : "${TFSTATE_KEY_DEV:?Missing GitHub variable TFSTATE_KEY_DEV}"
+          terraform -chdir="$TF_DIR" init -input=false \
+            -backend-config="resource_group_name=$TFSTATE_RESOURCE_GROUP" \
+            -backend-config="storage_account_name=$TFSTATE_STORAGE_ACCOUNT_NAME" \
+            -backend-config="container_name=$TFSTATE_CONTAINER_NAME" \
+            -backend-config="key=$TFSTATE_KEY_DEV" \
+            -backend-config="use_oidc=true" \
+            -backend-config="use_azuread_auth=true" \
+            -backend-config="tenant_id=$ARM_TENANT_ID" \
+            -backend-config="subscription_id=$ARM_SUBSCRIPTION_ID"
+
+      - name: Verify remote State is the expected existing Dev State
+        shell: bash
+        run: |
+          set -euo pipefail
+          terraform -chdir="$TF_DIR" state list | tee state-addresses.txt
+          grep -Fxq 'azurerm_resource_group.this' state-addresses.txt || {
+            echo '::error::Expected Dev Resource Group is missing from State. Refusing to plan/apply to avoid accidental duplicate infrastructure.'
+            exit 1
+          }
+          grep -Fxq 'module.container_app.azurerm_container_app.this' state-addresses.txt || {
+            echo '::error::Existing Container App address is missing from State. Verify backend/key and migrate/import State deliberately before CI/CD.'
+            exit 1
+          }
+
+      - name: Terraform Plan
+        shell: bash
+        env:
+          IMAGE: ${{ vars.ACR_LOGIN_SERVER }}/lssiv01:${{ github.sha }}
+        run: |
+          set -euo pipefail
+          terraform -chdir="$TF_DIR" plan -input=false -lock-timeout=5m \
+            -var="container_image=$IMAGE" \
+            -out=tfplan
+          terraform -chdir="$TF_DIR" show -no-color tfplan > "$TF_DIR/tfplan-review.txt"
+          terraform -chdir="$TF_DIR" show -json tfplan > "$TF_DIR/tfplan.json"
+          python - "$TF_DIR/tfplan.json" <<'PY'
+          import json, sys
+          plan = json.load(open(sys.argv[1], encoding="utf-8"))
+          changes = plan.get("resource_changes") or []
+          destructive = [
+              item for item in changes
+              if "delete" in (item.get("change", {}).get("actions") or [])
+          ]
+          if destructive:
+              print("::error::Terraform plan contains delete/replacement actions; automatic Dev deployment is blocked.")
+              for item in destructive:
+                  print(f" - {item.get('address')}: {item.get('change', {}).get('actions')}")
+              sys.exit(1)
+          counts = {"create": 0, "update": 0, "delete": 0, "no-op": 0}
+          for item in changes:
+              actions = item.get("change", {}).get("actions") or []
+              if actions == ["create"]: counts["create"] += 1
+              elif actions == ["update"]: counts["update"] += 1
+              elif actions == ["delete"]: counts["delete"] += 1
+              elif actions == ["no-op"]: counts["no-op"] += 1
+          summary = "Terraform Dev Plan: " + ", ".join(f"{k}={v}" for k, v in counts.items())
+          print(summary)
+          import os
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as f:
+              f.write("## Terraform Plan (Dev)\\n\\n")
+              f.write(summary + "\\n\\n")
+              f.write("The full review file is attached as the `terraform-plan-dev` artifact.\\n")
+          PY
+          rm -f "$TF_DIR/tfplan.json"
+
+      - name: Upload reviewed plan for approval/apply
+        uses: actions/upload-artifact@v4
+        with:
+          name: terraform-plan-dev
+          path: |
+            infra/terraform/environments/dev/tfplan
+            infra/terraform/environments/dev/tfplan-review.txt
+          retention-days: 1
+          if-no-files-found: error
+
+  terraform-apply:
+    name: Approval + Terraform Apply (Dev)
+    if: >-
+      github.ref == 'refs/heads/develop' &&
+      (github.event_name == 'push' ||
+       (github.event_name == 'workflow_dispatch' && inputs.deploy_dev == true))
+    needs: terraform-plan
+    runs-on: ubuntu-latest
+    # Configure required reviewers in GitHub Settings > Environments > dev.
+    # This job pauses here until a reviewer approves the deployment.
+    environment:
+      name: dev
+      url: https://ca-vn30f1m-dev.bravewave-4c45f0c3.southeastasia.azurecontainerapps.io
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      ARM_USE_OIDC: 'true'
+      ARM_USE_AZUREAD: 'true'
+      ARM_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+      ARM_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+      ARM_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      TFSTATE_RESOURCE_GROUP: ${{ vars.TFSTATE_RESOURCE_GROUP }}
+      TFSTATE_STORAGE_ACCOUNT_NAME: ${{ vars.TFSTATE_STORAGE_ACCOUNT_NAME }}
+      TFSTATE_CONTAINER_NAME: ${{ vars.TFSTATE_CONTAINER_NAME }}
+      TFSTATE_KEY_DEV: ${{ vars.TFSTATE_KEY_DEV }}
+    steps:
+      - name: Checkout exact commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Download the approved Terraform plan
+        uses: actions/download-artifact@v4
+        with:
+          name: terraform-plan-dev
+          path: infra/terraform/environments/dev
+
+      - name: Azure Login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Initialize same remote State
+        shell: bash
+        run: |
+          set -euo pipefail
+          terraform -chdir="$TF_DIR" init -input=false \
+            -backend-config="resource_group_name=$TFSTATE_RESOURCE_GROUP" \
+            -backend-config="storage_account_name=$TFSTATE_STORAGE_ACCOUNT_NAME" \
+            -backend-config="container_name=$TFSTATE_CONTAINER_NAME" \
+            -backend-config="key=$TFSTATE_KEY_DEV" \
+            -backend-config="use_oidc=true" \
+            -backend-config="use_azuread_auth=true" \
+            -backend-config="tenant_id=$ARM_TENANT_ID" \
+            -backend-config="subscription_id=$ARM_SUBSCRIPTION_ID"
+
+      - name: Apply the exact reviewed plan
+        run: terraform -chdir="$TF_DIR" apply -input=false -lock-timeout=5m tfplan
+
+      - name: Smoke test ACA endpoints
+        shell: bash
+        run: |
+          set -euo pipefail
+          FQDN="$(terraform -chdir="$TF_DIR" output -raw container_app_url)"
+          if [[ "$FQDN" == http* ]]; then APP_URL="$FQDN"; else APP_URL="https://$FQDN"; fi
+          echo "Checking $APP_URL"
+          for endpoint in health ready version; do
+            echo "Checking /$endpoint"
+            curl --fail --silent --show-error --retry 15 --retry-delay 10 --retry-connrefused "$APP_URL/$endpoint"
+            echo
+          done
+          curl --fail --silent --show-error "$APP_URL/version" | python -c \
+            'import json,sys,os; v=json.load(sys.stdin); expected=os.environ["GITHUB_SHA"]; actual=v.get("commit"); assert actual==expected, f"Expected commit {expected}, got {actual}"'
