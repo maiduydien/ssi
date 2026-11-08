@@ -5,8 +5,8 @@ variable "location" {
 }
 
 variable "project_name" {
-  type        = string
-  default     = "vn30f1m"
+  type    = string
+  default = "vn30f1m"
 }
 
 variable "environment" {
