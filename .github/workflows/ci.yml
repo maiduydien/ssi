@@ -352,7 +352,16 @@ jobs:
             --resource-group rg-vn30f1m-dev \
             --query "[].{name:name,active:properties.active,created:properties.createdTime}" \
             --output table
+      - name: Verify deployed Container App revision
+        shell: bash
+        run: |
+          set -euo pipefail
 
+          az containerapp revision list \
+            --name ca-vn30f1m-dev \
+            --resource-group rg-vn30f1m-dev \
+            --query "[].{Revision:name,Active:properties.active,Created:properties.createdTime}" \
+            --output table
 
       - name: Smoke test ACA endpoints
         shell: bash
