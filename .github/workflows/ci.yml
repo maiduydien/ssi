@@ -28,11 +28,10 @@ env:
 
 jobs:
   quality-and-image:
-    name: Python checks + Docker build/scan + ACR publish
+    name: Python checks + Docker build/scan
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      id-token: write
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -76,24 +75,41 @@ jobs:
           vuln-type: os,library
           severity: CRITICAL,HIGH
 
-      # Publish only from develop push, or a deliberate manual Dev deployment run.
-      # PRs and main-branch pushes never publish to ACR.
+  acr-publish:
+    name: Azure OIDC + Publish immutable image to ACR
+    if: >-
+      github.ref == 'refs/heads/develop' &&
+      (github.event_name == 'push' ||
+       (github.event_name == 'workflow_dispatch' && inputs.deploy_dev == true))
+    needs: quality-and-image
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Checkout exact commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+
       - name: Azure Login (OIDC - develop branch)
-        if: >-
-          github.ref == 'refs/heads/develop' &&
-          (github.event_name == 'push' ||
-           (github.event_name == 'workflow_dispatch' && inputs.deploy_dev == true))
         uses: azure/login@v3
         with:
           client-id: ${{ vars.AZURE_CLIENT_ID }}
           tenant-id: ${{ vars.AZURE_TENANT_ID }}
           subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
 
+      - name: Build image for ACR
+        env:
+          LOCAL_IMAGE: ssi-v57-platform:${{ github.sha }}
+        run: |
+          set -euo pipefail
+          docker build --pull \
+            --build-arg APP_VERSION="${GITHUB_RUN_NUMBER}" \
+            --build-arg GIT_SHA="${GITHUB_SHA}" \
+            -t "$LOCAL_IMAGE" .
+
       - name: Push immutable image to ACR
-        if: >-
-          github.ref == 'refs/heads/develop' &&
-          (github.event_name == 'push' ||
-           (github.event_name == 'workflow_dispatch' && inputs.deploy_dev == true))
         env:
           ACR_NAME: ${{ vars.ACR_NAME }}
           ACR_LOGIN_SERVER: ${{ vars.ACR_LOGIN_SERVER }}
@@ -111,6 +127,8 @@ jobs:
   terraform-validate:
     name: Terraform validate + Checkov
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -146,7 +164,7 @@ jobs:
       github.ref == 'refs/heads/develop' &&
       (github.event_name == 'push' ||
        (github.event_name == 'workflow_dispatch' && inputs.deploy_dev == true))
-    needs: [quality-and-image, terraform-validate]
+    needs: [acr-publish, terraform-validate]
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -199,19 +217,97 @@ jobs:
             -backend-config="tenant_id=$ARM_TENANT_ID" \
             -backend-config="subscription_id=$ARM_SUBSCRIPTION_ID"
 
-      - name: Verify remote State is the expected existing Dev State
+      - name: Verify Azure subscription and Terraform backend
         shell: bash
         run: |
           set -euo pipefail
+
+          EXPECTED_SUBSCRIPTION_ID="aa9f5824-1791-4f0f-81cc-1b63b2f83c61"
+          EXPECTED_STATE_RESOURCE_GROUP="gr_tf_remote_backend"
+          EXPECTED_STORAGE_ACCOUNT="vn30f1mtfstate"
+          EXPECTED_CONTAINER="tfstate"
+          EXPECTED_STATE_KEY="vn30f1m/dev.tfstate"
+
+          if [[ "$TFSTATE_RESOURCE_GROUP" != "$EXPECTED_STATE_RESOURCE_GROUP" || \
+                "$TFSTATE_STORAGE_ACCOUNT_NAME" != "$EXPECTED_STORAGE_ACCOUNT" || \
+                "$TFSTATE_CONTAINER_NAME" != "$EXPECTED_CONTAINER" || \
+                "$TFSTATE_KEY_DEV" != "$EXPECTED_STATE_KEY" ]]; then
+            echo "::error::Terraform backend configuration mismatch. Refusing Terraform Plan."
+            exit 1
+          fi
+
+          ACTUAL_SUBSCRIPTION_ID="$(az account show --query id -o tsv)"
+          if [[ "${ACTUAL_SUBSCRIPTION_ID,,}" != "${EXPECTED_SUBSCRIPTION_ID,,}" ]]; then
+            echo "::error::Azure subscription mismatch. Refusing Terraform Plan."
+            exit 1
+          fi
+
+          echo "Azure subscription and Terraform backend verified."
+
+      - name: Verify remote State resource identities
+        shell: bash
+        run: |
+          set -euo pipefail
+
           terraform -chdir="$TF_DIR" state list | tee state-addresses.txt
+
           grep -Fxq 'azurerm_resource_group.this' state-addresses.txt || {
-            echo '::error::Expected Dev Resource Group is missing from State. Refusing to plan/apply to avoid accidental duplicate infrastructure.'
+            echo "::error::Expected Dev Resource Group is missing from State. Refusing to plan."
             exit 1
           }
           grep -Fxq 'module.container_app.azurerm_container_app.this' state-addresses.txt || {
-            echo '::error::Existing Container App address is missing from State. Verify backend/key and migrate/import State deliberately before CI/CD.'
+            echo "::error::Expected Container App is missing from State. Refusing to plan."
             exit 1
           }
+
+          terraform -chdir="$TF_DIR" show -json > "$RUNNER_TEMP/current-state.json"
+
+          python - "$RUNNER_TEMP/current-state.json" <<'PY'
+          import json
+          import sys
+
+          expected = {
+              "azurerm_resource_group.this":
+                  "/subscriptions/aa9f5824-1791-4f0f-81cc-1b63b2f83c61/resourceGroups/rg-vn30f1m-dev",
+              "module.container_app.azurerm_container_app.this":
+                  "/subscriptions/aa9f5824-1791-4f0f-81cc-1b63b2f83c61/resourceGroups/rg-vn30f1m-dev/providers/Microsoft.App/containerApps/ca-vn30f1m-dev",
+          }
+
+          with open(sys.argv[1], encoding="utf-8") as f:
+              state = json.load(f)
+
+          resources = {}
+
+          def walk(module):
+              for resource in module.get("resources", []):
+                  resources[resource["address"]] = resource
+              for child in module.get("child_modules", []):
+                  walk(child)
+
+          root = state.get("values", {}).get("root_module", {})
+          walk(root)
+
+          for address, expected_id in expected.items():
+              resource = resources.get(address)
+              if resource is None:
+                  print(f"::error::Missing Terraform resource: {address}")
+                  sys.exit(1)
+
+              actual_id = resource.get("values", {}).get("id")
+              if not actual_id:
+                  print(f"::error::Resource has no ID in State: {address}")
+                  sys.exit(1)
+
+              if actual_id.rstrip("/").lower() != expected_id.rstrip("/").lower():
+                  print(f"::error::Terraform State resource ID mismatch: {address}")
+                  print(f"Expected: {expected_id}")
+                  print(f"Actual:   {actual_id}")
+                  sys.exit(1)
+
+              print(f"Verified Terraform resource: {address}")
+
+          print("Terraform State identity verification passed.")
+          PY
 
       - name: Terraform Plan
         shell: bash
@@ -225,19 +321,24 @@ jobs:
           terraform -chdir="$TF_DIR" show -no-color tfplan > "$TF_DIR/tfplan-review.txt"
           terraform -chdir="$TF_DIR" show -json tfplan > "$TF_DIR/tfplan.json"
           python - "$TF_DIR/tfplan.json" <<'PY'
-          import json, os, sys
+          import json
+          import os
+          import sys
+
           with open(sys.argv[1], encoding="utf-8") as source:
               plan = json.load(source)
+
           changes = plan.get("resource_changes") or []
           destructive = [
               item for item in changes
               if "delete" in (item.get("change", {}).get("actions") or [])
           ]
           if destructive:
-              print("::error::Terraform plan contains delete/replacement actions; automatic Dev deployment is blocked.")
+              print("::error::Terraform plan contains delete/replacement actions; deployment is blocked.")
               for item in destructive:
                   print(f" - {item.get('address')}: {item.get('change', {}).get('actions')}")
               sys.exit(1)
+
           counts = {"create": 0, "update": 0, "delete": 0, "no-op": 0}
           for item in changes:
               actions = item.get("change", {}).get("actions") or []
@@ -249,12 +350,17 @@ jobs:
                   counts["delete"] += 1
               elif actions == ["no-op"]:
                   counts["no-op"] += 1
-          summary = "Terraform Dev Plan: " + ", ".join(f"{key}={value}" for key, value in counts.items())
+
+          summary = "Terraform Dev Plan: " + ", ".join(
+              f"{key}={value}" for key, value in counts.items()
+          )
           print(summary)
           with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as summary_file:
-              summary_file.write("## Terraform Plan (Dev)\\n\\n")
-              summary_file.write(summary + "\\n\\n")
-              summary_file.write("Review the attached `terraform-plan-dev` artifact before approving deployment.\\n")
+              summary_file.write("## Terraform Plan (Dev)\n\n")
+              summary_file.write(summary + "\n\n")
+              summary_file.write(
+                  "Review the attached `terraform-plan-dev` artifact before approving deployment.\n"
+              )
           PY
           rm -f "$TF_DIR/tfplan.json"
 
