@@ -65,6 +65,13 @@ jobs:
             --build-arg APP_VERSION="${GITHUB_RUN_NUMBER}" \
             --build-arg GIT_SHA="${GITHUB_SHA}" \
             -t "$LOCAL_IMAGE" .
+      
+      - name: Verify Docker image Git SHA
+        run: |
+          docker run --rm \
+            --entrypoint python \
+            "$LOCAL_IMAGE" \
+            -c "import os; print('GIT_SHA =', os.getenv('GIT_SHA'))"
 
       - name: Scan Docker image
         uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
