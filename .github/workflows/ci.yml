@@ -75,6 +75,7 @@ jobs:
           ignore-unfixed: true
           vuln-type: os,library
           severity: CRITICAL,HIGH
+          trivyignores: .trivyignore.yaml
 
       # Publish only for pushes to develop, or an explicitly requested Dev deployment.
       # PRs and main-branch pushes run CI but do not publish/deploy.
