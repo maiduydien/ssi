@@ -40,3 +40,8 @@ variable "tags" {
   type    = map(string)
   default = {}
 }
+variable "container_app_environment_id" {
+  type        = string
+  default     = null
+  description = "Existing Container Apps Environment ID. If null, the module creates a new environment."
+}

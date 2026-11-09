@@ -1,4 +1,3 @@
-
 locals {
   name_prefix = "${var.project_name}-${var.environment}"
 
@@ -33,9 +32,20 @@ resource "azurerm_application_insights" "this" {
   tags                = local.common_tags
 }
 
+# ACR dùng chung đã được tạo bởi Terraform Shared.
+# Không tạo ACR mới trong Staging.
 data "azurerm_container_registry" "shared" {
   name                = var.acr_name
   resource_group_name = var.acr_resource_group_name
+}
+
+# ------------------------------------------------------------
+# Reuse Container Apps Environment from Dev
+# ------------------------------------------------------------
+
+data "azurerm_container_app_environment" "shared" {
+  name                = "cae-vn30f1m-dev"
+  resource_group_name = "rg-vn30f1m-dev"
 }
 
 data "azurerm_client_config" "current" {}
@@ -48,7 +58,11 @@ resource "random_string" "kv_suffix" {
 
 resource "azurerm_key_vault" "this" {
   name = substr(
-    replace("kv-${local.name_prefix}-${random_string.kv_suffix.result}", "-", ""),
+    replace(
+      "kv-${local.name_prefix}-${random_string.kv_suffix.result}",
+      "-",
+      ""
+    ),
     0,
     24
   )
@@ -60,10 +74,11 @@ resource "azurerm_key_vault" "this" {
   rbac_authorization_enabled = true
   purge_protection_enabled   = true
   soft_delete_retention_days = 7
-  tags                       = local.common_tags
+
+  tags = local.common_tags
 }
 
-# Managed Identity riêng cho môi trường staging
+# Identity riêng cho Container App Staging.
 resource "azurerm_user_assigned_identity" "container_app" {
   name                = "uami-${local.name_prefix}"
   location            = azurerm_resource_group.this.location
@@ -71,14 +86,14 @@ resource "azurerm_user_assigned_identity" "container_app" {
   tags                = local.common_tags
 }
 
-# Cho phép Container App pull image từ ACR dùng chung
+# Cho phép Container App Staging pull image từ ACR dùng chung.
 resource "azurerm_role_assignment" "container_app_acr_pull" {
   scope                = data.azurerm_container_registry.shared.id
   role_definition_name = "AcrPull"
   principal_id         = azurerm_user_assigned_identity.container_app.principal_id
 }
 
-# Cho phép Container App đọc secrets trong Key Vault staging
+# Cho phép identity của ứng dụng đọc secrets từ Key Vault Staging.
 resource "azurerm_role_assignment" "container_app_key_vault_secrets_user" {
   scope                = azurerm_key_vault.this.id
   role_definition_name = "Key Vault Secrets User"
@@ -100,10 +115,12 @@ module "container_app" {
   max_replicas                   = var.max_replicas
   app_insights_connection_string = azurerm_application_insights.this.connection_string
 
-  identity_id = azurerm_user_assigned_identity.container_app.id
+  identity_id                  = azurerm_user_assigned_identity.container_app.id
+  container_app_environment_id = data.azurerm_container_app_environment.shared.id
 
   tags = local.common_tags
 
+  # Role assignment phải có trước khi Container App pull image.
   depends_on = [
     azurerm_role_assignment.container_app_acr_pull,
     azurerm_role_assignment.container_app_key_vault_secrets_user,

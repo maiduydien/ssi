@@ -1,6 +1,6 @@
 variable "location" {
   type        = string
-  description = "Azure region for the dev environment."
+  description = "Azure region for the staging environment."
   default     = "southeastasia"
 }
 
@@ -16,8 +16,7 @@ variable "environment" {
 
 variable "container_image" {
   type        = string
-  description = "Existing ACR image reference with an immutable tag. CI must publish it first."
-  default     = "bootstrap-placeholder:replace-before-apply"
+  description = "Immutable ACR image tag published by CI."
 }
 
 variable "container_cpu" {
@@ -42,7 +41,7 @@ variable "max_replicas" {
 
 variable "acr_name" {
   type        = string
-  description = "Shared ACR created by the dev/shared infrastructure bootstrap."
+  description = "Shared ACR."
   default     = "acrvn30f1mshared"
 }
 
