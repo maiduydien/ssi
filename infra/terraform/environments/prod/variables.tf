@@ -1,23 +1,40 @@
-variable "location" {
+
+variable "subscription_id" {
+  description = "Azure Subscription ID"
   type        = string
-  description = "Azure region for the dev environment."
-  default     = "southeastasia"
+}
+
+variable "tenant_id" {
+  description = "Microsoft Entra Tenant ID"
+  type        = string
 }
 
 variable "project_name" {
-  type    = string
-  default = "vn30f1m"
+  description = "Project name"
+  type        = string
+  default     = "vn30f1m"
 }
 
 variable "environment" {
-  type    = string
-  default = "prod"
+  description = "Deployment environment"
+  type        = string
+  default     = "production"
+
+  validation {
+    condition     = var.environment == "production"
+    error_message = "This Terraform root is dedicated to production."
+  }
+}
+
+variable "location" {
+  description = "Azure region"
+  type        = string
+  default     = "southeastasia"
 }
 
 variable "container_image" {
+  description = "Immutable container image tag"
   type        = string
-  description = "Existing ACR image reference with an immutable tag. CI must publish it first."
-  default     = "bootstrap-placeholder:replace-before-apply"
 }
 
 variable "container_cpu" {
@@ -41,13 +58,23 @@ variable "max_replicas" {
 }
 
 variable "acr_name" {
-  type        = string
-  description = "Shared ACR created by the dev/shared infrastructure bootstrap."
-  default     = "acrvn30f1mshared"
+  type    = string
+  default = "acrvn30f1mshared"
 }
 
 variable "acr_resource_group_name" {
+  type    = string
+  default = "rg-vn30f1m-shared"
+}
+
+variable "shared_container_app_environment_name" {
+  description = "Name of the existing shared Container Apps Environment"
   type        = string
-  description = "Resource group that owns the shared ACR."
-  default     = "rg-vn30f1m-shared"
+  default     = "cae-vn30f1m-dev"
+}
+
+variable "shared_container_app_environment_resource_group_name" {
+  description = "Resource group containing the shared Container Apps Environment"
+  type        = string
+  default     = "rg-vn30f1m-dev"
 }

@@ -1,0 +1,212 @@
+
+name: Production - Terraform CI/CD
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "infra/terraform/environments/prod/**"
+      - "infra/terraform/modules/container_app/**"
+      - ".github/workflows/production-terraform.yml"
+
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: terraform-production
+  cancel-in-progress: false
+
+env:
+  TF_IN_AUTOMATION: "true"
+  TF_INPUT: "false"
+  TF_WORKING_DIR: infra/terraform/environments/prod
+  TFSTATE_CONTAINER: tfstate-production
+  TFSTATE_KEY: vn30f1m/production.tfstate
+
+jobs:
+
+  # ==========================================================
+  # JOB 1: TERRAFORM PLAN
+  # ==========================================================
+
+  terraform-plan:
+    name: Terraform Plan - Production
+
+    if: github.ref == 'refs/heads/main'
+
+    runs-on: ubuntu-latest
+
+    environment:
+      name: production-plan
+
+    permissions:
+      contents: read
+      id-token: write
+
+    env:
+      ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+      ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+      ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      ARM_USE_OIDC: "true"
+      ARM_USE_AZUREAD: "true"
+
+      TF_VAR_subscription_id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      TF_VAR_tenant_id: ${{ secrets.AZURE_TENANT_ID }}
+      TF_VAR_container_image: ${{ secrets.PRODUCTION_CONTAINER_IMAGE }}
+
+      TFSTATE_STORAGE_ACCOUNT: ${{ secrets.TFSTATE_STORAGE_ACCOUNT }}
+
+    steps:
+
+      - name: Checkout source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.9.8"
+
+      - name: Azure Login - Plan Identity
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Terraform Format Check
+        working-directory: infra/terraform/environments/prod
+        run: terraform fmt -check
+
+      - name: Terraform Module Format Check
+        working-directory: infra/terraform/modules/container_app
+        run: terraform fmt -check
+
+      - name: Terraform Init
+        working-directory: infra/terraform/environments/prod
+        shell: bash
+        run: |
+          terraform init \
+            -input=false \
+            -reconfigure \
+            -backend-config="storage_account_name=${TFSTATE_STORAGE_ACCOUNT}" \
+            -backend-config="container_name=${TFSTATE_CONTAINER}" \
+            -backend-config="key=${TFSTATE_KEY}" \
+            -backend-config="use_oidc=true" \
+            -backend-config="use_azuread_auth=true"
+
+      - name: Terraform Validate
+        working-directory: infra/terraform/environments/prod
+        run: terraform validate
+
+      - name: Terraform Plan
+        working-directory: infra/terraform/environments/prod
+        run: |
+          terraform plan \
+            -input=false \
+            -lock-timeout=5m \
+            -out=production.tfplan
+
+      - name: Export Plan Summary
+        working-directory: infra/terraform/environments/prod
+        run: |
+          terraform show -no-color production.tfplan > production-plan.txt
+
+      - name: Upload Terraform Plan
+        uses: actions/upload-artifact@v4
+        with:
+          name: production-tfplan-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            infra/terraform/environments/prod/production.tfplan
+            infra/terraform/environments/prod/production-plan.txt
+          retention-days: 1
+          if-no-files-found: error
+
+  # ==========================================================
+  # JOB 2: TERRAFORM APPLY
+  # ==========================================================
+
+  terraform-deploy:
+    name: Terraform Apply - Production
+
+    needs:
+      - terraform-plan
+
+    if: github.ref == 'refs/heads/main'
+
+    runs-on: ubuntu-latest
+
+    environment:
+      name: production
+
+    permissions:
+      contents: read
+      id-token: write
+
+    env:
+      ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+      ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+      ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      ARM_USE_OIDC: "true"
+      ARM_USE_AZUREAD: "true"
+
+      TF_VAR_subscription_id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      TF_VAR_tenant_id: ${{ secrets.AZURE_TENANT_ID }}
+      TF_VAR_container_image: ${{ secrets.PRODUCTION_CONTAINER_IMAGE }}
+
+      TFSTATE_STORAGE_ACCOUNT: ${{ secrets.TFSTATE_STORAGE_ACCOUNT }}
+
+    steps:
+
+      - name: Checkout source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Download Terraform Plan
+        uses: actions/download-artifact@v4
+        with:
+          name: production-tfplan-${{ github.run_id }}-${{ github.run_attempt }}
+          path: infra/terraform/environments/prod
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.9.8"
+
+      - name: Azure Login - Deploy Identity
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Terraform Init
+        working-directory: infra/terraform/environments/prod
+        shell: bash
+        run: |
+          terraform init \
+            -input=false \
+            -reconfigure \
+            -backend-config="storage_account_name=${TFSTATE_STORAGE_ACCOUNT}" \
+            -backend-config="container_name=${TFSTATE_CONTAINER}" \
+            -backend-config="key=${TFSTATE_KEY}" \
+            -backend-config="use_oidc=true" \
+            -backend-config="use_azuread_auth=true"
+
+      - name: Terraform Apply
+        working-directory: infra/terraform/environments/prod
+        run: |
+          terraform apply \
+            -input=false \
+            -auto-approve \
+            production.tfplan
+
+      - name: Terraform Output
+        working-directory: infra/terraform/environments/prod
+        run: terraform output -no-color

@@ -1,7 +1,52 @@
-# Use the immutable image tag already pushed to the shared ACR.
-container_image         = "acrvn30f1mshared.azurecr.io/ssi-v57-platform:IMMUTABLE_TAG"
-location               = "southeastasia"
-project_name            = "vn30f1m"
-environment             = "prod"
+
+# ============================================================
+# PRODUCTION ENVIRONMENT
+# ============================================================
+
+subscription_id = "aa9f5824-1791-4f0f-81cc-1b63b2f83c61"
+
+tenant_id = "883a7a28-d5f2-4e91-aba8-0fd3ba125d81"
+
+project_name = "vn30f1m"
+
+environment = "production"
+
+location = "southeastasia"
+
+
+# ============================================================
+# CONTAINER IMAGE
+# ============================================================
+
+# Replace the placeholder with an immutable Git commit SHA.
+# Confirm that the repository exists in the shared ACR.
+
+container_image = "acrvn30f1mshared.azurecr.io/ssi-v57-platform:REPLACE_WITH_GITHUB_SHA"
+
+
+# ============================================================
+# CONTAINER CONFIGURATION
+# ============================================================
+
+container_cpu    = 0.5
+container_memory = "1Gi"
+
+min_replicas = 1
+max_replicas = 3
+
+
+# ============================================================
+# SHARED AZURE CONTAINER REGISTRY
+# ============================================================
+
 acr_name                = "acrvn30f1mshared"
 acr_resource_group_name = "rg-vn30f1m-shared"
+
+
+# ============================================================
+# SHARED CONTAINER APPS ENVIRONMENT
+# ============================================================
+
+shared_container_app_environment_name = "cae-vn30f1m-dev"
+
+shared_container_app_environment_resource_group_name = "rg-vn30f1m-dev"

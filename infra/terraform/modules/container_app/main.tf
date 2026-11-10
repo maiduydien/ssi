@@ -1,12 +1,6 @@
 
 # ------------------------------------------------------------
 # Container Apps Environment
-#
-# Nếu không truyền container_app_environment_id:
-#   Module tự tạo CAE như trước (Dev).
-#
-# Nếu truyền container_app_environment_id:
-#   Module sử dụng CAE có sẵn (Staging).
 # ------------------------------------------------------------
 
 resource "azurerm_container_app_environment" "this" {
@@ -26,10 +20,6 @@ resource "azurerm_container_app_environment" "this" {
     ]
   }
 }
-
-# ------------------------------------------------------------
-# Resolve Container Apps Environment ID
-# ------------------------------------------------------------
 
 locals {
   container_app_environment_id = (
@@ -71,6 +61,17 @@ resource "azurerm_container_app" "this" {
     min_replicas = var.min_replicas
     max_replicas = var.max_replicas
 
+    # Attach Azure Files only when a storage registration is supplied.
+    dynamic "volume" {
+      for_each = var.azure_files_storage_name == null ? [] : [var.azure_files_storage_name]
+
+      content {
+        name         = "duckdb-data"
+        storage_type = "AzureFile"
+        storage_name = volume.value
+      }
+    }
+
     container {
       name   = "ssi-v57"
       image  = var.container_image
@@ -100,6 +101,15 @@ resource "azurerm_container_app" "this" {
       env {
         name  = "APPLICATIONINSIGHTS_CONNECTION_STRING"
         value = var.app_insights_connection_string
+      }
+
+      dynamic "volume_mounts" {
+        for_each = var.azure_files_storage_name == null ? [] : [1]
+
+        content {
+          name = "duckdb-data"
+          path = "/app/data"
+        }
       }
     }
   }
