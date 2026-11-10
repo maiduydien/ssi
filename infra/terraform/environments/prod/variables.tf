@@ -39,7 +39,7 @@ variable "container_image" {
 
 variable "container_cpu" {
   type    = number
-  default = 2
+  default = 4
 }
 
 variable "container_memory" {
