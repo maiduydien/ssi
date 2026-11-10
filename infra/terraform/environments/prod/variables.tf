@@ -39,12 +39,12 @@ variable "container_image" {
 
 variable "container_cpu" {
   type    = number
-  default = 4
+  default = 2
 }
 
 variable "container_memory" {
   type    = string
-  default = "8Gi"
+  default = "4Gi"
 }
 
 variable "min_replicas" {
