@@ -39,12 +39,12 @@ variable "container_image" {
 
 variable "container_cpu" {
   type    = number
-  default = 0.5
+  default = 2
 }
 
 variable "container_memory" {
   type    = string
-  default = "1Gi"
+  default = "8Gi"
 }
 
 variable "min_replicas" {
@@ -54,7 +54,7 @@ variable "min_replicas" {
 
 variable "max_replicas" {
   type    = number
-  default = 3
+  default = 1
 }
 
 variable "acr_name" {
