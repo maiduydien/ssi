@@ -118,9 +118,9 @@ resource "azurerm_storage_account" "production_data" {
 }
 
 resource "azurerm_storage_share" "production_data" {
-  name               = "vn30f1m-data"
+  name                 = "vn30f1m-data"
   storage_account_name = azurerm_storage_account.production_data.name
-  quota              = 100
+  quota                = 100
 }
 
 # Register the Production Azure Files share with the existing CAE.
