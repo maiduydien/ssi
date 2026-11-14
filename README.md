@@ -176,3 +176,5 @@ This baseline is not production-ready yet. Outstanding items include:
 ## Source preservation
 
 `legacy/v57_original/` contains the original uploaded ZIP snapshot for comparison and rollback. It is not included in the runtime Docker image.
+
+## Testing Azure board connection 
