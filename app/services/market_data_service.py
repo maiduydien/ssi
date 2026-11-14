@@ -100,11 +100,13 @@ class MarketDataService:
             self.last_error = None
             return True, "DuckDB query succeeded"
         except Exception as exc:
+            logger.exception("Readiness check failed")
             if self.mode == "auto":
                 self.last_source = "mock"
-                self.last_error = str(exc)
-                return True, f"demo fallback active: {exc}"
-            return False, str(exc)
+                self.last_error = "Readiness check failed"
+                return True, "demo fallback active due to data-source error"
+            self.last_error = "Readiness check failed"
+            return False, "readiness check failed"
 
 
 market_data_service = MarketDataService()
